@@ -30,7 +30,7 @@ enum ConnectionState {
 }
 
 // Global state
-let slackClient: SlackClient | undefined;
+let slackClient: SlackClient | null = null;
 let terminalManager: TerminalManager | undefined;
 let messageHandler: MessageHandler | undefined;
 let statusBarItem: vscode.StatusBarItem;
@@ -138,8 +138,8 @@ async function handleConnect(): Promise<void> {
         setConnectionState(ConnectionState.Connecting);
         log('Connecting to Slack...');
 
-        // Create and connect Slack client
-        slackClient = await createSlackClient(config);
+        // Create Slack client
+        slackClient = new SlackClient(config.appToken, config.botToken);
 
         // Create terminal manager
         terminalManager = await createTerminalManager(config);
@@ -220,7 +220,7 @@ async function cleanup(): Promise<void> {
         } catch (e) {
             log(`Error disconnecting Slack client: ${e}`);
         }
-        slackClient = undefined;
+        slackClient = null;
     }
 
     setConnectionState(ConnectionState.Disconnected);
@@ -239,7 +239,7 @@ function setupEventListeners(config: SlackTerminalConfig): void {
         log(`Received message from ${message.user}: ${message.text?.substring(0, 50)}...`);
 
         // Security check: only allow configured user
-        if (message.user !== config.allowedUserId) {
+        if (!isAuthorizedUser(message.user, config.allowedUserId)) {
             log(`Ignoring message from unauthorized user: ${message.user}`);
             return;
         }
@@ -257,20 +257,22 @@ function setupEventListeners(config: SlackTerminalConfig): void {
         }
     });
 
-    // Handle connection events
-    slackClient.on('connected', () => {
-        setConnectionState(ConnectionState.Connected);
-        log('Slack connection established');
-    });
-
-    slackClient.on('disconnected', () => {
-        setConnectionState(ConnectionState.Disconnected);
-        log('Slack connection lost');
-    });
-
-    slackClient.on('reconnecting', () => {
-        setConnectionState(ConnectionState.Reconnecting);
-        log('Reconnecting to Slack...');
+    // Handle connection status changes
+    slackClient.on('statusChange', (status: ConnectionStatus) => {
+        switch (status) {
+            case 'connected':
+                setConnectionState(ConnectionState.Connected);
+                log('Slack connection established');
+                break;
+            case 'disconnected':
+                setConnectionState(ConnectionState.Disconnected);
+                log('Slack connection lost');
+                break;
+            case 'reconnecting':
+                setConnectionState(ConnectionState.Reconnecting);
+                log('Reconnecting to Slack...');
+                break;
+        }
     });
 
     slackClient.on('error', (error: Error) => {
@@ -374,22 +376,7 @@ function log(message: string): void {
     outputChannel.appendLine(`[${timestamp}] ${message}`);
 }
 
-// Factory functions - these will be replaced with actual implementations
-// once the other modules are created
-
-async function createSlackClient(config: SlackTerminalConfig): Promise<SlackClient> {
-    // TODO: Import and instantiate the actual SlackClient from ./slack/client
-    // For now, throw an error indicating the module needs to be implemented
-
-    // When implemented, this will look like:
-    // const { SlackClient } = await import('./slack/client');
-    // return new SlackClient(config.appToken, config.botToken);
-
-    throw new Error(
-        'SlackClient not yet implemented. ' +
-        'Waiting for src/slack/client.ts to be created.'
-    );
-}
+// Factory functions - TerminalManager and MessageHandler still pending implementation
 
 async function createTerminalManager(config: SlackTerminalConfig): Promise<TerminalManager> {
     // TODO: Import and instantiate the actual TerminalManager from ./terminal/manager
