@@ -2,24 +2,9 @@ import * as vscode from 'vscode';
 import { getConfig, hasRequiredTokens, validateConfig, SlackTerminalConfig } from './config';
 import { SlackClient, SlackMessage, ConnectionStatus } from './slack/client';
 import { isAuthorizedUser } from './slack/auth';
-
-interface TerminalManager {
-    getOrCreateTerminal(threadId: string): vscode.Terminal;
-    getTerminal(threadId: string): vscode.Terminal | undefined;
-    closeTerminal(threadId: string): boolean;
-    closeAllTerminals(): void;
-    listTerminals(): string[];
-    sendInput(threadId: string, text: string): void;
-    sendInterrupt(threadId: string): void;
-    on(event: 'output', handler: (threadId: string, output: string) => void): void;
-    on(event: 'exit', handler: (threadId: string, exitCode: number | undefined) => void): void;
-    dispose(): void;
-}
-
-interface MessageHandler {
-    handleMessage(message: SlackMessage): Promise<void>;
-    dispose(): void;
-}
+import { TerminalManager } from './terminal/manager';
+import { OutputCapture } from './terminal/output-capture';
+import { MessageHandler } from './slack/message-handler';
 
 // Connection state enum
 enum ConnectionState {
@@ -32,6 +17,7 @@ enum ConnectionState {
 // Global state
 let slackClient: SlackClient | null = null;
 let terminalManager: TerminalManager | undefined;
+let outputCapture: OutputCapture | undefined;
 let messageHandler: MessageHandler | undefined;
 let statusBarItem: vscode.StatusBarItem;
 let connectionState: ConnectionState = ConnectionState.Disconnected;
@@ -142,10 +128,10 @@ async function handleConnect(): Promise<void> {
         slackClient = new SlackClient(config.appToken, config.botToken);
 
         // Create terminal manager
-        terminalManager = await createTerminalManager(config);
+        terminalManager = createTerminalManager(config);
 
         // Create message handler
-        messageHandler = await createMessageHandler(config, slackClient, terminalManager);
+        messageHandler = createMessageHandler(config, slackClient, terminalManager);
 
         // Set up event listeners
         setupEventListeners(config);
@@ -192,25 +178,27 @@ async function handleDisconnect(): Promise<void> {
  * Cleans up all resources.
  */
 async function cleanup(): Promise<void> {
-    // Dispose message handler
-    if (messageHandler) {
-        try {
-            messageHandler.dispose();
-        } catch (e) {
-            log(`Error disposing message handler: ${e}`);
-        }
-        messageHandler = undefined;
-    }
+    // Clear message handler reference
+    messageHandler = undefined;
 
     // Close all terminals
     if (terminalManager) {
         try {
             terminalManager.closeAllTerminals();
-            terminalManager.dispose();
         } catch (e) {
             log(`Error closing terminals: ${e}`);
         }
         terminalManager = undefined;
+    }
+
+    // Dispose output capture
+    if (outputCapture) {
+        try {
+            outputCapture.dispose();
+        } catch (e) {
+            log(`Error disposing output capture: ${e}`);
+        }
+        outputCapture = undefined;
     }
 
     // Disconnect Slack client
@@ -279,52 +267,60 @@ function setupEventListeners(config: SlackTerminalConfig): void {
         log(`Slack client error: ${error.message}`);
     });
 
-    // Handle terminal output
-    terminalManager.on('output', async (threadId: string, output: string) => {
-        if (!slackClient) return;
+    // Handle terminal output via OutputCapture callback
+    if (outputCapture) {
+        outputCapture.onOutput(async (threadId, batchedOutput) => {
+            if (!slackClient) return;
 
-        try {
-            const threadTs = threadId; // threadId is the Slack thread timestamp
+            try {
+                if (batchedOutput.truncated && batchedOutput.fullText) {
+                    // Send as file attachment for long output
+                    await slackClient.uploadFile(
+                        config.channelId,
+                        batchedOutput.fullText,
+                        'output.md',
+                        threadId
+                    );
+                } else {
+                    // Send as regular message
+                    await slackClient.sendMessage(
+                        config.channelId,
+                        '```\n' + batchedOutput.text + '\n```',
+                        threadId
+                    );
+                }
+            } catch (error) {
+                log(`Error sending output to Slack: ${error}`);
+            }
+        });
+    }
 
-            if (output.length > config.truncateAt) {
-                // Send as file attachment for long output
-                await slackClient.uploadFile(
-                    config.channelId,
-                    output,
-                    'output.md',
-                    threadTs
-                );
-            } else {
-                // Send as regular message
+    // Handle terminal close events via VS Code API
+    const terminalCloseListener = vscode.window.onDidCloseTerminal(async (terminal) => {
+        if (!terminalManager || !slackClient) return;
+
+        // Find the thread ID for this terminal
+        const sessions = terminalManager.getAllSessions();
+        const session = sessions.find(s => s.terminal === terminal);
+
+        if (session) {
+            try {
                 await slackClient.sendMessage(
                     config.channelId,
-                    '```\n' + output + '\n```',
-                    threadTs
+                    'Terminal closed',
+                    session.threadTs
                 );
+            } catch (error) {
+                log(`Error sending exit notification: ${error}`);
             }
-        } catch (error) {
-            log(`Error sending output to Slack: ${error}`);
+
+            // Clean up the session
+            terminalManager.onTerminalClosed(terminal);
         }
     });
 
-    // Handle terminal exit
-    terminalManager.on('exit', async (threadId: string, exitCode: number | undefined) => {
-        if (!slackClient) return;
-
-        try {
-            const message = exitCode !== undefined
-                ? `Terminal exited with code ${exitCode}`
-                : 'Terminal closed';
-
-            await slackClient.sendMessage(
-                config.channelId,
-                message,
-                threadId
-            );
-        } catch (error) {
-            log(`Error sending exit notification: ${error}`);
-        }
-    });
+    // Store listener for cleanup (would need to add to a disposables array)
+    // For now, this listener will persist until extension deactivates
 }
 
 /**
@@ -376,36 +372,30 @@ function log(message: string): void {
     outputChannel.appendLine(`[${timestamp}] ${message}`);
 }
 
-// Factory functions - TerminalManager and MessageHandler still pending implementation
+// Factory functions
 
-async function createTerminalManager(config: SlackTerminalConfig): Promise<TerminalManager> {
-    // TODO: Import and instantiate the actual TerminalManager from ./terminal/manager
-    // For now, throw an error indicating the module needs to be implemented
-
-    // When implemented, this will look like:
-    // const { TerminalManager } = await import('./terminal/manager');
-    // return new TerminalManager(config);
-
-    throw new Error(
-        'TerminalManager not yet implemented. ' +
-        'Waiting for src/terminal/manager.ts to be created.'
-    );
+function createOutputCapture(config: SlackTerminalConfig): OutputCapture {
+    outputCapture = new OutputCapture({
+        batchDelayMs: config.batchDelayMs,
+        truncateAt: config.truncateAt,
+    });
+    return outputCapture;
 }
 
-async function createMessageHandler(
+function createTerminalManager(config: SlackTerminalConfig): TerminalManager {
+    const capture = createOutputCapture(config);
+    return new TerminalManager({
+        outputCapture: capture,
+    });
+}
+
+function createMessageHandler(
     config: SlackTerminalConfig,
     client: SlackClient,
     terminals: TerminalManager
-): Promise<MessageHandler> {
-    // TODO: Import and instantiate the actual MessageHandler from ./slack/message-handler
-    // For now, throw an error indicating the module needs to be implemented
-
-    // When implemented, this will look like:
-    // const { MessageHandler } = await import('./slack/message-handler');
-    // return new MessageHandler(config, client, terminals);
-
-    throw new Error(
-        'MessageHandler not yet implemented. ' +
-        'Waiting for src/slack/message-handler.ts to be created.'
-    );
+): MessageHandler {
+    return new MessageHandler(client, terminals, {
+        allowedUserId: config.allowedUserId,
+        channelId: config.channelId,
+    });
 }
