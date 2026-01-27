@@ -100,11 +100,15 @@ export class SlackClient extends EventEmitter {
 
         // Handle incoming message events
         this.socketClient.on('message', async ({ event, ack }) => {
+            console.log(`[SlackClient] Received raw message event:`, JSON.stringify(event, null, 2));
+
             // Acknowledge the event first
             await ack();
+            console.log(`[SlackClient] Acknowledged message`);
 
             // Ignore bot messages and message subtypes (edits, deletes, etc.)
             if (event.bot_id || event.subtype) {
+                console.log(`[SlackClient] Ignoring message - bot_id: ${event.bot_id}, subtype: ${event.subtype}`);
                 return;
             }
 
@@ -118,6 +122,7 @@ export class SlackClient extends EventEmitter {
                 channelType: event.channel_type,
             };
 
+            console.log(`[SlackClient] Emitting message event:`, JSON.stringify(message));
             this.emit('message', message);
         });
 
@@ -165,14 +170,22 @@ export class SlackClient extends EventEmitter {
      * @param threadTs - Optional thread timestamp to reply in thread
      */
     async sendMessage(channel: string, text: string, threadTs?: string): Promise<void> {
-        await this.webClient.chat.postMessage({
-            channel,
-            text,
-            thread_ts: threadTs,
-            // Unfurl links disabled to keep messages clean
-            unfurl_links: false,
-            unfurl_media: false,
-        });
+        console.log(`[SlackClient] sendMessage called - channel: ${channel}, threadTs: ${threadTs}, text length: ${text.length}`);
+        console.log(`[SlackClient] sendMessage text preview: ${text.substring(0, 200).replace(/\n/g, '\\n')}...`);
+        try {
+            const result = await this.webClient.chat.postMessage({
+                channel,
+                text,
+                thread_ts: threadTs,
+                // Unfurl links disabled to keep messages clean
+                unfurl_links: false,
+                unfurl_media: false,
+            });
+            console.log(`[SlackClient] sendMessage SUCCESS - ts: ${result.ts}`);
+        } catch (error) {
+            console.error(`[SlackClient] sendMessage FAILED:`, error);
+            throw error;
+        }
     }
 
     /**
@@ -189,12 +202,19 @@ export class SlackClient extends EventEmitter {
         filename: string,
         threadTs?: string
     ): Promise<void> {
-        await this.webClient.files.uploadV2({
-            channel_id: channel,
-            content,
-            filename,
-            thread_ts: threadTs,
-        });
+        console.log(`[SlackClient] uploadFile called - channel: ${channel}, filename: ${filename}, threadTs: ${threadTs}, content length: ${content.length}`);
+        try {
+            await this.webClient.files.uploadV2({
+                channel_id: channel,
+                content,
+                filename,
+                thread_ts: threadTs,
+            });
+            console.log(`[SlackClient] uploadFile SUCCESS`);
+        } catch (error) {
+            console.error(`[SlackClient] uploadFile FAILED:`, error);
+            throw error;
+        }
     }
 
     /**

@@ -268,13 +268,20 @@ function setupEventListeners(config: SlackTerminalConfig): void {
     });
 
     // Handle terminal output via OutputCapture callback
+    console.log(`[Extension] Setting up outputCapture callback, outputCapture exists: ${!!outputCapture}`);
     if (outputCapture) {
         outputCapture.onOutput(async (threadId, batchedOutput) => {
-            if (!slackClient) return;
+            console.log(`[Extension] outputCapture.onOutput FIRED - threadId: ${threadId}, text length: ${batchedOutput.text.length}, truncated: ${batchedOutput.truncated}`);
+            console.log(`[Extension] Output preview: ${batchedOutput.text.substring(0, 200).replace(/\n/g, '\\n')}...`);
+
+            if (!slackClient) {
+                console.log(`[Extension] No slackClient, cannot send output`);
+                return;
+            }
 
             try {
                 if (batchedOutput.truncated && batchedOutput.fullText) {
-                    // Send as file attachment for long output
+                    console.log(`[Extension] Sending truncated output as file attachment`);
                     await slackClient.uploadFile(
                         config.channelId,
                         batchedOutput.fullText,
@@ -282,17 +289,22 @@ function setupEventListeners(config: SlackTerminalConfig): void {
                         threadId
                     );
                 } else {
-                    // Send as regular message
+                    console.log(`[Extension] Sending output as regular message`);
                     await slackClient.sendMessage(
                         config.channelId,
                         '```\n' + batchedOutput.text + '\n```',
                         threadId
                     );
                 }
+                console.log(`[Extension] Output sent to Slack successfully`);
             } catch (error) {
+                console.error(`[Extension] Error sending output to Slack:`, error);
                 log(`Error sending output to Slack: ${error}`);
             }
         });
+        console.log(`[Extension] outputCapture.onOutput callback registered`);
+    } else {
+        console.warn(`[Extension] WARNING: outputCapture is null/undefined, output capture will not work!`);
     }
 
     // Handle terminal close events via VS Code API

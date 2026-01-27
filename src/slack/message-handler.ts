@@ -95,24 +95,28 @@ export class MessageHandler {
      * @param event - The Slack message event
      */
     async handleMessage(event: SlackMessage): Promise<void> {
+        console.log(`[MessageHandler] handleMessage called - user: ${event.user}, channel: ${event.channel}, threadTs: ${event.threadTs}, text: "${event.text}"`);
+
         // Step 1: Check if user is authorized
         if (!isAuthorizedUser(event.user, this.config.allowedUserId)) {
-            // Silently ignore unauthorized users
+            console.log(`[MessageHandler] Unauthorized user ${event.user} (allowed: ${this.config.allowedUserId})`);
             return;
         }
+        console.log(`[MessageHandler] User authorized`);
 
         // Step 2: Check if we should listen to this channel
         if (this.config.channelId && event.channel !== this.config.channelId) {
-            // Ignore messages from other channels
+            console.log(`[MessageHandler] Ignoring message from channel ${event.channel} (configured: ${this.config.channelId})`);
             return;
         }
+        console.log(`[MessageHandler] Channel matched`);
 
         // Step 3: Determine if this is a thread message or new terminal request
         if (event.threadTs) {
-            // Message is in a thread - route to existing terminal or handle command
+            console.log(`[MessageHandler] Routing to handleThreadMessage (threadTs: ${event.threadTs})`);
             await this.handleThreadMessage(event);
         } else {
-            // Message is not in a thread - create new terminal
+            console.log(`[MessageHandler] Routing to handleNewTerminalRequest (new thread)`);
             await this.handleNewTerminalRequest(event);
         }
     }
@@ -123,15 +127,17 @@ export class MessageHandler {
     private async handleThreadMessage(event: SlackMessage): Promise<void> {
         const threadTs = event.threadTs!;
         const parsed = parseMessage(event.text);
+        console.log(`[MessageHandler] handleThreadMessage - threadTs: ${threadTs}, isCommand: ${parsed.isCommand}, command: ${parsed.command}, text: "${parsed.text}"`);
 
         if (parsed.isCommand) {
-            // Handle slash command
+            console.log(`[MessageHandler] Handling slash command: /${parsed.command}`);
             await this.handleCommand(parsed.command!, event.channel, threadTs);
         } else {
-            // Send text to terminal stdin
+            console.log(`[MessageHandler] Sending text to terminal: "${parsed.text}"`);
             const sent = this.terminalManager.sendInput(threadTs, parsed.text);
+            console.log(`[MessageHandler] sendInput result: ${sent}`);
             if (!sent) {
-                // Terminal doesn't exist for this thread
+                console.log(`[MessageHandler] No terminal found for thread ${threadTs}`);
                 await this.slackClient.sendMessage(
                     event.channel,
                     'No terminal session for this thread. Start a new terminal by sending a message outside a thread.',
@@ -146,9 +152,11 @@ export class MessageHandler {
      */
     private async handleNewTerminalRequest(event: SlackMessage): Promise<void> {
         const parsed = parseMessage(event.text);
+        console.log(`[MessageHandler] handleNewTerminalRequest - ts: ${event.ts}, isCommand: ${parsed.isCommand}, text: "${parsed.text}"`);
 
         // For non-thread messages, /status and /list work without a terminal
         if (parsed.isCommand) {
+            console.log(`[MessageHandler] Handling top-level command: /${parsed.command}`);
             if (parsed.command === 'status') {
                 await this.handleStatusCommand(event.channel, event.ts);
                 return;
@@ -171,17 +179,22 @@ export class MessageHandler {
         }
 
         // Create a new terminal - the message ts becomes the thread ts
+        console.log(`[MessageHandler] Creating new terminal for thread ${event.ts}`);
         const session = this.terminalManager.createTerminal(event.ts, event.channel);
+        console.log(`[MessageHandler] Terminal created: ${session.terminal.name}`);
 
         // Reply in a thread to acknowledge
+        console.log(`[MessageHandler] Sending "Terminal created" acknowledgment`);
         await this.slackClient.sendMessage(
             event.channel,
             'Terminal created. Send commands in this thread.',
             event.ts
         );
 
-        // Send the initial command to the terminal
-        session.terminal.sendText(parsed.text);
+        // Send the initial command to the terminal using the manager's sendInput for proper \r handling
+        console.log(`[MessageHandler] Sending initial command to terminal: "${parsed.text}"`);
+        this.terminalManager.sendInput(event.ts, parsed.text);
+        console.log(`[MessageHandler] Initial command sent`);
     }
 
     /**

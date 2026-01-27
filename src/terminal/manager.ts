@@ -32,9 +32,12 @@ export class TerminalManager {
      * @returns The created terminal session
      */
     createTerminal(threadTs: string, channel: string): TerminalSession {
+        console.log(`[TerminalManager] createTerminal called - threadTs: ${threadTs}, channel: ${channel}`);
+
         const terminal = vscode.window.createTerminal({
             name: `slack-${threadTs}`,
         });
+        console.log(`[TerminalManager] VS Code terminal created: ${terminal.name}`);
 
         const session: TerminalSession = {
             terminal,
@@ -44,8 +47,21 @@ export class TerminalManager {
         };
 
         this.terminals.set(threadTs, session);
-        terminal.show();
+        console.log(`[TerminalManager] Session stored, total terminals: ${this.terminals.size}`);
 
+        terminal.show();
+        console.log(`[TerminalManager] Terminal shown`);
+
+        // Start capturing output for this terminal
+        console.log(`[TerminalManager] Starting output capture for terminal`);
+        try {
+            this.outputCapture.startCapture(terminal, threadTs);
+            console.log(`[TerminalManager] Output capture started successfully`);
+        } catch (error) {
+            console.error(`[TerminalManager] ERROR starting output capture:`, error);
+        }
+
+        console.log(`[TerminalManager] createTerminal completed, returning session`);
         return session;
     }
 
@@ -71,14 +87,33 @@ export class TerminalManager {
      * Send input to a terminal
      * @param threadTs - The thread timestamp ID
      * @param text - The text to send
+     * @param addNewline - Whether to add newline after text (default: true)
      * @returns true if sent, false if terminal not found
      */
-    sendInput(threadTs: string, text: string): boolean {
+    sendInput(threadTs: string, text: string, addNewline: boolean = true): boolean {
+        console.log(`[TerminalManager] sendInput called - threadTs: ${threadTs}, text: "${text}", addNewline: ${addNewline}`);
+
         const session = this.terminals.get(threadTs);
         if (!session) {
+            console.log(`[TerminalManager] sendInput FAILED - no session found for threadTs: ${threadTs}`);
+            console.log(`[TerminalManager] Available sessions: ${Array.from(this.terminals.keys()).join(', ')}`);
             return false;
         }
-        session.terminal.sendText(text);
+
+        console.log(`[TerminalManager] Found session for terminal: ${session.terminal.name}`);
+
+        if (addNewline) {
+            // Send text without VS Code's default newline, then send carriage return
+            // This works better with TUI applications like Claude Code CLI that expect \r
+            console.log(`[TerminalManager] Sending text without newline, then \\r`);
+            session.terminal.sendText(text, false);
+            session.terminal.sendText('\r', false);
+        } else {
+            console.log(`[TerminalManager] Sending text without newline`);
+            session.terminal.sendText(text, false);
+        }
+
+        console.log(`[TerminalManager] sendInput SUCCESS`);
         return true;
     }
 
