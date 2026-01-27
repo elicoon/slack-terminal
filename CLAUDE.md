@@ -18,11 +18,17 @@ slack-terminal/
 │   │   ├── auth.ts           # User ID whitelist check
 │   │   ├── message-handler.ts# Route messages, handle slash commands
 │   │   └── index.ts          # Exports
-│   └── terminal/
-│       ├── manager.ts        # Create/track/destroy terminals
-│       ├── output-capture.ts # Buffer & batch terminal output
-│       ├── prompt-detector.ts# Detect [y/n], password prompts
-│       └── terminal-renderer.ts # ANSI rendering utilities
+│   ├── terminal/
+│   │   ├── manager.ts        # Create/track/destroy terminals
+│   │   ├── output-capture.ts # Buffer & batch terminal output
+│   │   ├── prompt-detector.ts# Detect [y/n], password prompts
+│   │   └── terminal-renderer.ts # ANSI rendering utilities
+│   └── test/
+│       ├── runTest.ts        # VS Code test launcher
+│       └── suite/
+│           ├── index.ts      # Mocha test loader
+│           ├── auth.test.ts  # Auth unit tests
+│           └── extension.test.ts # Extension integration tests
 ├── out/                      # Compiled JS (gitignored)
 ├── test-workspace/           # Test workspace with settings for F5
 ├── .vscode/
@@ -122,7 +128,15 @@ F5 in VS Code      # Launch Extension Development Host
 
 ## Testing
 
+**Automated tests:** `npm test` - runs VS Code test-electron with Mocha
+- Downloads VS Code if needed, launches with extension loaded
+- Runs all `*.test.ts` files in `src/test/suite/`
+- Tests: extension activation, command registration, auth logic
+
+**Manual testing:**
 1. F5 to launch Extension Development Host (opens test-workspace)
 2. Extension auto-connects if autoConnect: true
 3. Send message in Slack channel
 4. Check Output panel → "Slack Terminal" for logs
+
+**Adding tests:** Create `*.test.ts` in `src/test/suite/` using Mocha's `suite()`/`test()` syntax.
