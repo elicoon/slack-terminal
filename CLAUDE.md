@@ -98,8 +98,6 @@ npm test           # Run tests
 F5 in VS Code      # Launch Extension Development Host
 ```
 
-**Windows note:** Use PowerShell or Git Bash. `find` command differs from Unix.
-
 ## Configuration (package.json contributes.configuration)
 
 | Setting | Type | Default | Description |
